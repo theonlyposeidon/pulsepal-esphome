@@ -1,161 +1,115 @@
-import esphome.codegen as cg
-import esphome.config_validation as cv
-from esphome import automation
-from esphome.components import ble_client, number, sensor, switch
-from esphome.const import (
-    CONF_ID,
-    DEVICE_CLASS_ENERGY,
-    DEVICE_CLASS_POWER,
-    DEVICE_CLASS_BATTERY,
-    STATE_CLASS_MEASUREMENT,
-    STATE_CLASS_TOTAL_INCREASING,
-    UNIT_KILOWATT_HOURS,
-    UNIT_PERCENT,
-    UNIT_VOLT,
-    UNIT_WATT,
-)
+#pragma once
 
-DEPENDENCIES = ["ble_client"]
+#ifdef USE_ESP32
 
-pulsepal_ns = cg.esphome_ns.namespace("pulsepal")
-PulsePal = pulsepal_ns.class_(
-    "PulsePal",
-    cg.Component,
-    ble_client.BLEClientNode,
-)
+#include <string>
 
-PulsePalNumber = pulsepal_ns.class_("PulsePalNumber", number.Number)
-PulsePalSwitch = pulsepal_ns.class_("PulsePalSwitch", switch.Switch)
+#include "esphome/core/component.h"
+#include "esphome/components/ble_client/ble_client.h"
+#include "esphome/components/sensor/sensor.h"
+#include "esphome/components/number/number.h"
+#include "esphome/components/switch/switch.h"
+#include "esphome/components/time/real_time_clock.h"
 
-CONF_BLE_CLIENT_ID = "ble_client_id"
-CONF_PULSES_PER_KWH = "pulses_per_kwh"
-CONF_POWER = "power"
-CONF_TOTAL_ENERGY = "total_energy"
-CONF_PULSE_COUNT = "pulse_count"
-CONF_BATTERY = "battery"
-CONF_BATTERY_VOLTAGE = "battery_voltage"
-CONF_AVERAGE_INTERVAL = "average_interval"
-CONF_REPORT_INTERVAL = "report_interval"
-CONF_LIVE_POWER = "live_power"
+#include <esp_gattc_api.h>
 
-SENSOR_SCHEMA = sensor.sensor_schema
-NUMBER_SCHEMA = number.number_schema
-SWITCH_SCHEMA = switch.switch_schema
+namespace esphome {
+namespace pulsepal {
 
-CONFIG_SCHEMA = cv.Schema(
-    {
-        cv.GenerateID(): cv.declare_id(PulsePal),
-        cv.Required(CONF_BLE_CLIENT_ID): cv.use_id(ble_client.BLEClient),
-        cv.Optional(CONF_PULSES_PER_KWH, default=3200): cv.int_range(min=1, max=1000000),
+class PulsePal;
 
-        cv.Optional(CONF_POWER): SENSOR_SCHEMA.extend(
-            {
-                cv.Optional("device_class", default=DEVICE_CLASS_POWER): cv.string,
-                cv.Optional("state_class", default=STATE_CLASS_MEASUREMENT): cv.string,
-                cv.Optional("unit_of_measurement", default=UNIT_WATT): cv.string,
-            }
-        ),
-        cv.Optional(CONF_TOTAL_ENERGY): SENSOR_SCHEMA.extend(
-            {
-                cv.Optional("device_class", default=DEVICE_CLASS_ENERGY): cv.string,
-                cv.Optional("state_class", default=STATE_CLASS_TOTAL_INCREASING): cv.string,
-                cv.Optional("unit_of_measurement", default=UNIT_KILOWATT_HOURS): cv.string,
-            }
-        ),
-        cv.Optional(CONF_PULSE_COUNT): SENSOR_SCHEMA.extend(
-            {
-                cv.Optional("state_class", default=STATE_CLASS_TOTAL_INCREASING): cv.string,
-                cv.Optional("unit_of_measurement", default="pulses"): cv.string,
-            }
-        ),
-        cv.Optional(CONF_BATTERY): SENSOR_SCHEMA.extend(
-            {
-                cv.Optional("device_class", default=DEVICE_CLASS_BATTERY): cv.string,
-                cv.Optional("state_class", default=STATE_CLASS_MEASUREMENT): cv.string,
-                cv.Optional("unit_of_measurement", default=UNIT_PERCENT): cv.string,
-            }
-        ),
-        cv.Optional(CONF_BATTERY_VOLTAGE): SENSOR_SCHEMA.extend(
-            {
-                cv.Optional("state_class", default=STATE_CLASS_MEASUREMENT): cv.string,
-                cv.Optional("unit_of_measurement", default=UNIT_VOLT): cv.string,
-            }
-        ),
+// Custom Number entity: forwards changes to the parent PulsePal component,
+// which decides (via is_average_number/is_report_number) which BLE command
+// to send. Neither this nor PulsePalSwitch below is a Component -- their
+// "initial value" is published directly at codegen time (see
+// set_initial_value/set_initial_state), so no setup()/loop() is needed.
+class PulsePalNumber : public number::Number {
+ public:
+  void set_parent(PulsePal *parent) { this->parent_ = parent; }
+  void set_initial_value(float value) { this->publish_state(value); }
 
-        cv.Optional(CONF_AVERAGE_INTERVAL): cv.All(
-            NUMBER_SCHEMA,
-            cv.Schema(
-                {
-                    cv.GenerateID(): cv.declare_id(PulsePalNumber),
-                    cv.Optional("min_value", default=1000): cv.float_range(min=1000),
-                    cv.Optional("max_value", default=3600000): cv.float_range(max=3600000),
-                    cv.Optional("step", default=1000): cv.float_range(min=1),
-                }
-            ),
-        ),
-        cv.Optional(CONF_REPORT_INTERVAL): cv.All(
-            NUMBER_SCHEMA,
-            cv.Schema(
-                {
-                    cv.GenerateID(): cv.declare_id(PulsePalNumber),
-                    cv.Optional("min_value", default=1000): cv.float_range(min=1000),
-                    cv.Optional("max_value", default=3600000): cv.float_range(max=3600000),
-                    cv.Optional("step", default=1000): cv.float_range(min=1),
-                }
-            ),
-        ),
-        cv.Optional(CONF_LIVE_POWER): cv.All(
-            SWITCH_SCHEMA,
-            cv.GenerateID(),
-        ),
-    }
-).extend(cv.COMPONENT_SCHEMA)
+ protected:
+  void control(float value) override;
 
+  PulsePal *parent_{nullptr};
+};
 
-async def to_code(config):
-    parent = await cg.get_variable(config[CONF_BLE_CLIENT_ID])
-    var = cg.new_Pvariable(config[CONF_ID], parent)
-    await cg.register_component(var, config)
-    cg.add(parent.register_ble_node(var))
-    cg.add(var.set_pulses_per_kwh(config[CONF_PULSES_PER_KWH]))
+class PulsePalSwitch : public switch_::Switch {
+ public:
+  void set_parent(PulsePal *parent) { this->parent_ = parent; }
+  void set_initial_state(bool state) { this->publish_state(state); }
 
-    if CONF_POWER in config:
-        sens = await sensor.new_sensor(config[CONF_POWER])
-        cg.add(var.set_power_sensor(sens))
+ protected:
+  void write_state(bool state) override;
 
-    if CONF_TOTAL_ENERGY in config:
-        sens = await sensor.new_sensor(config[CONF_TOTAL_ENERGY])
-        cg.add(var.set_total_energy_sensor(sens))
+  PulsePal *parent_{nullptr};
+};
 
-    if CONF_PULSE_COUNT in config:
-        sens = await sensor.new_sensor(config[CONF_PULSE_COUNT])
-        cg.add(var.set_pulse_count_sensor(sens))
+class PulsePal : public Component, public ble_client::BLEClientNode {
+ public:
+  explicit PulsePal(ble_client::BLEClient *parent);
 
-    if CONF_BATTERY in config:
-        sens = await sensor.new_sensor(config[CONF_BATTERY])
-        cg.add(var.set_battery_sensor(sens))
+  void setup() override;
+  void loop() override;
+  void dump_config() override;
+  float get_setup_priority() const override { return setup_priority::DATA; }
 
-    if CONF_BATTERY_VOLTAGE in config:
-        sens = await sensor.new_sensor(config[CONF_BATTERY_VOLTAGE])
-        cg.add(var.set_battery_voltage_sensor(sens))
+  void gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,
+                            esp_ble_gattc_cb_param_t *param) override;
 
-    if CONF_AVERAGE_INTERVAL in config:
-        num = cg.new_Pvariable(config[CONF_AVERAGE_INTERVAL][CONF_ID])
-        await number.register_number(num, config[CONF_AVERAGE_INTERVAL])
-        cg.add(num.set_parent(var))
-        cg.add(num.set_initial_value(config[CONF_AVERAGE_INTERVAL].get("initial_value", 60000)))
-        cg.add(var.set_average_interval_number(num))
+  void set_power_sensor(sensor::Sensor *s) { power_sensor_ = s; }
+  void set_total_energy_sensor(sensor::Sensor *s) { total_energy_sensor_ = s; }
+  void set_pulse_count_sensor(sensor::Sensor *s) { pulse_count_sensor_ = s; }
+  void set_battery_sensor(sensor::Sensor *s) { battery_sensor_ = s; }
+  void set_battery_voltage_sensor(sensor::Sensor *s) { battery_voltage_sensor_ = s; }
 
-    if CONF_REPORT_INTERVAL in config:
-        num = cg.new_Pvariable(config[CONF_REPORT_INTERVAL][CONF_ID])
-        await number.register_number(num, config[CONF_REPORT_INTERVAL])
-        cg.add(num.set_parent(var))
-        cg.add(num.set_initial_value(config[CONF_REPORT_INTERVAL].get("initial_value", 5000)))
-        cg.add(var.set_report_interval_number(num))
+  void set_pulses_per_kwh(uint32_t v) { pulses_per_kwh_ = v; }
+  void set_average_interval_number(PulsePalNumber *n) { average_interval_number_ = n; }
+  void set_report_interval_number(PulsePalNumber *n) { report_interval_number_ = n; }
+  void set_live_power_switch(PulsePalSwitch *s) { live_power_switch_ = s; }
+  void set_time(time::RealTimeClock *t) { time_ = t; }
 
-    if CONF_LIVE_POWER in config:
-        sw = cg.new_Pvariable(config[CONF_LIVE_POWER][CONF_ID])
-        await switch.register_switch(sw, config[CONF_LIVE_POWER])
-        cg.add(sw.set_parent(var))
-        cg.add(sw.set_initial_state(True))
-        cg.add(var.set_live_power_switch(sw))
+  // Called from PulsePalNumber/PulsePalSwitch when the user changes them.
+  void set_average_interval(float value_ms);
+  void set_report_interval(float value_ms);
+  void set_live_power(bool value);
+
+  bool is_average_number(PulsePalNumber *n) const { return n == average_interval_number_; }
+  bool is_report_number(PulsePalNumber *n) const { return n == report_interval_number_; }
+
+ protected:
+  void process_line_(const char *line);
+  void publish_status_(uint32_t count, float watts, int battery_pct, int battery_mv);
+  void publish_interval_(uint32_t sequence, uint32_t epoch, float energy_kwh, float average_watts);
+  void publish_history_(uint32_t sequence, uint32_t epoch, float energy_kwh, float average_watts);
+  void send_command_(const std::string &command);
+  void send_history_request_();
+  void send_time_sync_();
+
+  sensor::Sensor *power_sensor_{nullptr};
+  sensor::Sensor *total_energy_sensor_{nullptr};
+  sensor::Sensor *pulse_count_sensor_{nullptr};
+  sensor::Sensor *battery_sensor_{nullptr};
+  sensor::Sensor *battery_voltage_sensor_{nullptr};
+
+  PulsePalNumber *average_interval_number_{nullptr};
+  PulsePalNumber *report_interval_number_{nullptr};
+  PulsePalSwitch *live_power_switch_{nullptr};
+  time::RealTimeClock *time_{nullptr};
+
+  uint32_t pulses_per_kwh_{1000};
+
+  uint16_t tx_handle_{0};
+  uint16_t rx_handle_{0};
+  bool notify_registered_{false};
+
+  std::string rx_buffer_;
+
+  uint32_t last_pulse_count_{0};
+  uint32_t last_history_sequence_{0};
+};
+
+}  // namespace pulsepal
+}  // namespace esphome
+
+#endif  // USE_ESP32

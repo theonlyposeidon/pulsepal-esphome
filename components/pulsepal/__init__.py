@@ -2,8 +2,10 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import automation
 from esphome.components import ble_client, number, sensor, switch
+from esphome.components import time as time_
 from esphome.const import (
     CONF_ID,
+    CONF_TIME_ID,
     DEVICE_CLASS_ENERGY,
     DEVICE_CLASS_POWER,
     DEVICE_CLASS_BATTERY,
@@ -16,6 +18,7 @@ from esphome.const import (
 )
 
 DEPENDENCIES = ["ble_client"]
+AUTO_LOAD = ["sensor", "number", "switch"]
 
 pulsepal_ns = cg.esphome_ns.namespace("pulsepal")
 PulsePal = pulsepal_ns.class_(
@@ -47,6 +50,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.GenerateID(): cv.declare_id(PulsePal),
         cv.Required(CONF_BLE_CLIENT_ID): cv.use_id(ble_client.BLEClient),
         cv.Optional(CONF_PULSES_PER_KWH, default=3200): cv.int_range(min=1, max=1000000),
+        cv.Optional(CONF_TIME_ID): cv.use_id(time_.RealTimeClock),
 
         cv.Optional(CONF_POWER): SENSOR_SCHEMA.extend(
             {
@@ -116,8 +120,14 @@ async def to_code(config):
     parent = await cg.get_variable(config[CONF_BLE_CLIENT_ID])
     var = cg.new_Pvariable(config[CONF_ID], parent)
     await cg.register_component(var, config)
-    cg.add(parent.register_ble_node(var))
+    # NOTE: the PulsePal constructor already calls parent->register_ble_node(this)
+    # in C++ -- do not also call it here, or every GATT event (including every
+    # pulse notification) gets dispatched twice.
     cg.add(var.set_pulses_per_kwh(config[CONF_PULSES_PER_KWH]))
+
+    if CONF_TIME_ID in config:
+        time_var = await cg.get_variable(config[CONF_TIME_ID])
+        cg.add(var.set_time(time_var))
 
     if CONF_POWER in config:
         sens = await sensor.new_sensor(config[CONF_POWER])

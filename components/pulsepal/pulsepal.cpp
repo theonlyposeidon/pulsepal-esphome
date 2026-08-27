@@ -95,6 +95,11 @@ void PulsePal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
 
       this->send_command_("SET_PPKWH," + std::to_string(this->pulses_per_kwh_) + "\n");
 
+      // Without this, the device's epoch stays 0 forever and every
+      // STATUS/INTERVAL/HISTORY record is timestamped 0 -- send it before
+      // anything else that depends on the device having a real clock.
+      this->send_time_sync_();
+
       if (this->report_interval_number_ != nullptr)
         this->send_command_("SET_REPORT," +
                             std::to_string((uint32_t) this->report_interval_number_->state) + "\n");
@@ -251,6 +256,17 @@ void PulsePal::send_command_(const std::string &command) {
 
 void PulsePal::send_history_request_() {
   this->send_command_("REQUEST_HISTORY\n");
+}
+
+void PulsePal::send_time_sync_() {
+  if (this->time_ == nullptr)
+    return;
+
+  auto now = this->time_->now();
+  if (!now.is_valid())
+    return;
+
+  this->send_command_("SET_TIME," + std::to_string((uint32_t) now.timestamp) + "\n");
 }
 
 void PulsePal::set_average_interval(float value) {
