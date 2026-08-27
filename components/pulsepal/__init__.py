@@ -6,6 +6,10 @@ from esphome.components import time as time_
 from esphome.const import (
     CONF_ID,
     CONF_TIME_ID,
+    CONF_MIN_VALUE,
+    CONF_MAX_VALUE,
+    CONF_STEP,
+    CONF_INITIAL_VALUE,
     DEVICE_CLASS_ENERGY,
     DEVICE_CLASS_POWER,
     DEVICE_CLASS_BATTERY,
@@ -41,9 +45,11 @@ CONF_AVERAGE_INTERVAL = "average_interval"
 CONF_REPORT_INTERVAL = "report_interval"
 CONF_LIVE_POWER = "live_power"
 
-SENSOR_SCHEMA = sensor.sensor_schema
-NUMBER_SCHEMA = number.number_schema
-SWITCH_SCHEMA = switch.switch_schema
+# NOTE: sensor.sensor_schema() / number.number_schema() / switch.switch_schema()
+# are factory FUNCTIONS -- they must be CALLED with kwargs to produce an actual
+# cv.Schema object. Assigning the bare function (as this file used to) and
+# calling .extend() on it fails with "'function' object has no attribute
+# 'extend'", since a plain function has no .extend().
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -52,65 +58,56 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_PULSES_PER_KWH, default=3200): cv.int_range(min=1, max=1000000),
         cv.Optional(CONF_TIME_ID): cv.use_id(time_.RealTimeClock),
 
-        cv.Optional(CONF_POWER): SENSOR_SCHEMA.extend(
-            {
-                cv.Optional("device_class", default=DEVICE_CLASS_POWER): cv.string,
-                cv.Optional("state_class", default=STATE_CLASS_MEASUREMENT): cv.string,
-                cv.Optional("unit_of_measurement", default=UNIT_WATT): cv.string,
-            }
+        cv.Optional(CONF_POWER): sensor.sensor_schema(
+            unit_of_measurement=UNIT_WATT,
+            device_class=DEVICE_CLASS_POWER,
+            state_class=STATE_CLASS_MEASUREMENT,
         ),
-        cv.Optional(CONF_TOTAL_ENERGY): SENSOR_SCHEMA.extend(
-            {
-                cv.Optional("device_class", default=DEVICE_CLASS_ENERGY): cv.string,
-                cv.Optional("state_class", default=STATE_CLASS_TOTAL_INCREASING): cv.string,
-                cv.Optional("unit_of_measurement", default=UNIT_KILOWATT_HOURS): cv.string,
-            }
+        cv.Optional(CONF_TOTAL_ENERGY): sensor.sensor_schema(
+            unit_of_measurement=UNIT_KILOWATT_HOURS,
+            device_class=DEVICE_CLASS_ENERGY,
+            state_class=STATE_CLASS_TOTAL_INCREASING,
         ),
-        cv.Optional(CONF_PULSE_COUNT): SENSOR_SCHEMA.extend(
-            {
-                cv.Optional("state_class", default=STATE_CLASS_TOTAL_INCREASING): cv.string,
-                cv.Optional("unit_of_measurement", default="pulses"): cv.string,
-            }
+        cv.Optional(CONF_PULSE_COUNT): sensor.sensor_schema(
+            unit_of_measurement="pulses",
+            state_class=STATE_CLASS_TOTAL_INCREASING,
         ),
-        cv.Optional(CONF_BATTERY): SENSOR_SCHEMA.extend(
-            {
-                cv.Optional("device_class", default=DEVICE_CLASS_BATTERY): cv.string,
-                cv.Optional("state_class", default=STATE_CLASS_MEASUREMENT): cv.string,
-                cv.Optional("unit_of_measurement", default=UNIT_PERCENT): cv.string,
-            }
+        cv.Optional(CONF_BATTERY): sensor.sensor_schema(
+            unit_of_measurement=UNIT_PERCENT,
+            device_class=DEVICE_CLASS_BATTERY,
+            state_class=STATE_CLASS_MEASUREMENT,
         ),
-        cv.Optional(CONF_BATTERY_VOLTAGE): SENSOR_SCHEMA.extend(
-            {
-                cv.Optional("state_class", default=STATE_CLASS_MEASUREMENT): cv.string,
-                cv.Optional("unit_of_measurement", default=UNIT_VOLT): cv.string,
-            }
+        cv.Optional(CONF_BATTERY_VOLTAGE): sensor.sensor_schema(
+            unit_of_measurement=UNIT_VOLT,
+            state_class=STATE_CLASS_MEASUREMENT,
         ),
 
-        cv.Optional(CONF_AVERAGE_INTERVAL): cv.All(
-            NUMBER_SCHEMA,
-            cv.Schema(
-                {
-                    cv.GenerateID(): cv.declare_id(PulsePalNumber),
-                    cv.Optional("min_value", default=1000): cv.float_range(min=1000),
-                    cv.Optional("max_value", default=3600000): cv.float_range(max=3600000),
-                    cv.Optional("step", default=1000): cv.float_range(min=1),
-                }
-            ),
+        # min_value/max_value/step aren't part of number.number_schema()'s own
+        # kwargs -- they're read separately in to_code() and passed into
+        # number.new_number(), matching how ESPHome's own custom Number
+        # components do it (see e.g. esphome/issues#6172 for the pattern).
+        cv.Optional(CONF_AVERAGE_INTERVAL): number.number_schema(
+            PulsePalNumber,
+        ).extend(
+            {
+                cv.Optional(CONF_MIN_VALUE, default=1000): cv.float_,
+                cv.Optional(CONF_MAX_VALUE, default=3600000): cv.float_,
+                cv.Optional(CONF_STEP, default=1000): cv.float_,
+                cv.Optional(CONF_INITIAL_VALUE, default=60000): cv.float_,
+            }
         ),
-        cv.Optional(CONF_REPORT_INTERVAL): cv.All(
-            NUMBER_SCHEMA,
-            cv.Schema(
-                {
-                    cv.GenerateID(): cv.declare_id(PulsePalNumber),
-                    cv.Optional("min_value", default=1000): cv.float_range(min=1000),
-                    cv.Optional("max_value", default=3600000): cv.float_range(max=3600000),
-                    cv.Optional("step", default=1000): cv.float_range(min=1),
-                }
-            ),
+        cv.Optional(CONF_REPORT_INTERVAL): number.number_schema(
+            PulsePalNumber,
+        ).extend(
+            {
+                cv.Optional(CONF_MIN_VALUE, default=1000): cv.float_,
+                cv.Optional(CONF_MAX_VALUE, default=3600000): cv.float_,
+                cv.Optional(CONF_STEP, default=1000): cv.float_,
+                cv.Optional(CONF_INITIAL_VALUE, default=5000): cv.float_,
+            }
         ),
-        cv.Optional(CONF_LIVE_POWER): cv.All(
-            SWITCH_SCHEMA,
-            cv.GenerateID(),
+        cv.Optional(CONF_LIVE_POWER): switch.switch_schema(
+            PulsePalSwitch,
         ),
     }
 ).extend(cv.COMPONENT_SCHEMA)
@@ -150,22 +147,31 @@ async def to_code(config):
         cg.add(var.set_battery_voltage_sensor(sens))
 
     if CONF_AVERAGE_INTERVAL in config:
-        num = cg.new_Pvariable(config[CONF_AVERAGE_INTERVAL][CONF_ID])
-        await number.register_number(num, config[CONF_AVERAGE_INTERVAL])
+        conf = config[CONF_AVERAGE_INTERVAL]
+        num = await number.new_number(
+            conf,
+            min_value=conf[CONF_MIN_VALUE],
+            max_value=conf[CONF_MAX_VALUE],
+            step=conf[CONF_STEP],
+        )
         cg.add(num.set_parent(var))
-        cg.add(num.set_initial_value(config[CONF_AVERAGE_INTERVAL].get("initial_value", 60000)))
+        cg.add(num.set_initial_value(conf[CONF_INITIAL_VALUE]))
         cg.add(var.set_average_interval_number(num))
 
     if CONF_REPORT_INTERVAL in config:
-        num = cg.new_Pvariable(config[CONF_REPORT_INTERVAL][CONF_ID])
-        await number.register_number(num, config[CONF_REPORT_INTERVAL])
+        conf = config[CONF_REPORT_INTERVAL]
+        num = await number.new_number(
+            conf,
+            min_value=conf[CONF_MIN_VALUE],
+            max_value=conf[CONF_MAX_VALUE],
+            step=conf[CONF_STEP],
+        )
         cg.add(num.set_parent(var))
-        cg.add(num.set_initial_value(config[CONF_REPORT_INTERVAL].get("initial_value", 5000)))
+        cg.add(num.set_initial_value(conf[CONF_INITIAL_VALUE]))
         cg.add(var.set_report_interval_number(num))
 
     if CONF_LIVE_POWER in config:
-        sw = cg.new_Pvariable(config[CONF_LIVE_POWER][CONF_ID])
-        await switch.register_switch(sw, config[CONF_LIVE_POWER])
+        sw = await switch.new_switch(config[CONF_LIVE_POWER])
         cg.add(sw.set_parent(var))
         cg.add(sw.set_initial_state(True))
         cg.add(var.set_live_power_switch(sw))
