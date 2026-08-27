@@ -24,8 +24,8 @@ static constexpr uint8_t NUS_RX_UUID[16] = {
     0x9e, 0xca, 0x4e, 0xe2, 0x0c, 0xa9, 0x9a, 0xe0,
     0x93, 0xf3, 0xa3, 0xb5, 0x02, 0x00, 0x40, 0x6e};
 
-static espbt::ESPBTUUID uuid_from_bytes(const uint8_t *bytes) {
-  return espbt::ESPBTUUID::from_raw(bytes);
+static esp32_ble_tracker::ESPBTUUID uuid_from_bytes(const uint8_t *bytes) {
+  return esp32_ble_tracker::ESPBTUUID::from_raw(bytes);
 }
 
 PulsePal::PulsePal(ble_client::BLEClient *parent) {
@@ -34,7 +34,7 @@ PulsePal::PulsePal(ble_client::BLEClient *parent) {
 
 void PulsePal::setup() {
   this->rx_buffer_.reserve(256);
-  this->node_state = espbt::ClientState::IDLE;
+  this->node_state = esp32_ble_tracker::ClientState::IDLE;
 }
 
 void PulsePal::loop() {
@@ -89,7 +89,7 @@ void PulsePal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
       }
 
       this->notify_registered_ = true;
-      this->node_state = espbt::ClientState::ESTABLISHED;
+      this->node_state = esp32_ble_tracker::ClientState::ESTABLISHED;
 
       ESP_LOGI(TAG, "PulsePal BLE connected");
 
@@ -142,7 +142,7 @@ void PulsePal::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gat
     case ESP_GATTC_CLOSE_EVT:
     case ESP_GATTC_DISCONNECT_EVT:
       this->notify_registered_ = false;
-      this->node_state = espbt::ClientState::IDLE;
+      this->node_state = esp32_ble_tracker::ClientState::IDLE;
       this->rx_buffer_.clear();
       ESP_LOGI(TAG, "PulsePal BLE disconnected");
       break;
